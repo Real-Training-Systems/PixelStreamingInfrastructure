@@ -1,23 +1,13 @@
-# Copyright Epic Games, Inc. All Rights Reserved.
+# Copyright 1998-2021 Epic Games, Inc. All Rights Reserved.
 
-# Parse $args into a string
-$params = $args[0]
-if ( $args.Count -gt 1 ) {
-  $params = $args[1..$($args.Count - 1)]
-  # Do setup as a common task, it is smart and will not reinstall if not required.
-  Start-Process -FilePath "$PSScriptRoot\setup.bat" -Wait -NoNewWindow -ArgumentList $params
-}
-else {
-  Start-Process -FilePath "$PSScriptRoot\setup.bat" -Wait -NoNewWindow
-}
-echo $params
+# Do setup as a common task, it is smart and will not reinstall if not required.
+. "$PSScriptRoot\setup.ps1"
 
 $global:ScriptName = $MyInvocation.MyCommand.Name
 $global:PublicIP = $null
 $global:StunServer = $null
 $global:TurnServer = $null
 $global:CirrusCmd = $null
-$global:BuildFrontend = $null
 
 function print_usage {
  echo "
@@ -50,11 +40,9 @@ function print_parameters {
 
 function set_start_default_values($SetTurnServerVar, $SetStunServerVar) {
  # publicip and cirruscmd are always needed
- $global:PublicIP = Invoke-WebRequest -Uri "https://api.ipify.org" -UseBasicParsing
+ $global:publicip = (Invoke-WebRequest -Uri "https://api.ipify.org" -UseBasicParsing).Content
  if ($global:PublicIP -eq $null -Or $global:PublicIP.length -eq 0) {
   $global:PublicIP = "127.0.0.1"
- } else {
-    $global:PublicIP = ($global:PublicIP).Content
  }
  $global:cirruscmd = ""
 
@@ -77,8 +65,6 @@ function use_args($arg) {
   } elseif ($Cmd -eq "--publicip") {
    $global:PublicIP, $CmdArgs = $CmdArgs
    $global:TurnServer = $global:publicip + ":19303"
-  } elseif ($Cmd -eq "--build") {
-   $global:BuildFrontend, $CmdArgs = $CmdArgs
   } elseif ($Cmd -eq "--help") {
    print_usage
   } else {
