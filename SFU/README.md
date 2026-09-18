@@ -69,8 +69,8 @@ An example for running might be as follows.
 ## Subscription and negotiation regression tests
 
 Run `npm test --prefix Signalling` from the repository root and
-`npm test --prefix SFU`. These cover repeated subscriptions, actual streamer
-switches, explicit reconnects, asynchronous peer replacement and isolation of
+`npm test --prefix SFU`. These cover the reproduced subscription race,
+asynchronous peer replacement and isolation of
 invalid answers. The SFU tests exercise its real handlers with controlled
 transport promises; they do not require a GPU.
 
