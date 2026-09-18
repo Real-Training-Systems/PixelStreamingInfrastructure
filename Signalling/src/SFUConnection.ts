@@ -168,6 +168,10 @@ export class SFUConnection extends EventEmitter implements IPlayer, IStreamer, L
             LogUtils.createHandlerListener(this, this.onStopStreaming)
         );
         this.protocol.on(Messages.ping.typeName, LogUtils.createHandlerListener(this, this.onPingMessage));
+        this.protocol.on(
+            Messages.disconnectPlayer.typeName,
+            LogUtils.createHandlerListener(this, this.onDisconnectPlayerRequest)
+        );
         /* eslint-enable @typescript-eslint/unbound-method */
 
         this.protocol.on(Messages.offer.typeName, this.sendToPlayer.bind(this));
@@ -232,6 +236,17 @@ export class SFUConnection extends EventEmitter implements IPlayer, IStreamer, L
         message.playerId = message.playerId || this.playerId;
 
         this.subscribedStreamer.protocol.sendMessage(message);
+    }
+
+    private onDisconnectPlayerRequest(message: Messages.disconnectPlayer): void {
+        if (!message.playerId || !this.subscribers.has(message.playerId)) {
+            Logger.warn(`SFU ${this.streamerId} tried to disconnect a player which is not subscribed to it.`);
+            return;
+        }
+        const player = this.server.playerRegistry.get(message.playerId);
+        if (player?.subscribedStreamer === this) {
+            player.protocol.disconnect(1011, message.reason);
+        }
     }
 
     private sendToPlayer(message: BaseMessage): void {

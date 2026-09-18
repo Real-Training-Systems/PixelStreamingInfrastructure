@@ -65,3 +65,32 @@ You will also need to use the `host` network driver on docker because of the way
 An example for running might be as follows.
 
 ```docker run -e SIGNALLING_URL=ws://192.168.1.10:8889 --network="host" ghcr.io/epicgames/pixel-streaming-sfu:5.4```
+
+## Subscription and negotiation regression tests
+
+Run `npm test --prefix Signalling` from the repository root and
+`npm test --prefix SFU`. These cover repeated subscriptions, actual streamer
+switches, explicit reconnects, asynchronous peer replacement and isolation of
+invalid answers. The SFU tests exercise its real handlers with controlled
+transport promises; they do not require a GPU.
+
+For a live before/after comparison, keep the Unreal executable, frontend and
+launch settings identical:
+
+1. Wait for the SFU's streamer transport and SCTP connection to be ready.
+2. Connect a browser player and send `layerPreference` before `subscribe`.
+3. After receiving the first offer, explicitly subscribe to the same SFU.
+4. Delay answers by one second so the subscription request is processed first.
+5. Require exactly one offer/answer exchange and advancing decoded video.
+   The unpatched sequence replaces the peer, sends two offers and can terminate
+   the SFU when both answers reach the replacement endpoint.
+6. Keep a second viewer decoding while deliberately sending an extra answer from
+   the first. Only the offending viewer should be disconnected, with close code
+   1011; the SFU, streamer and other viewer must remain operational.
+7. Exercise explicit unsubscribe/reconnect, streamer changes, abandoned joins,
+   browser reloads and multi-viewer quality changes. Record process exits
+   separately from browser or network failures.
+
+Capture timestamps and SDP hashes at signalling boundaries to correlate offers
+and answers without publishing raw SDP credentials. An obsolete asynchronous
+operation must never recreate a disconnected peer or tear down its replacement.

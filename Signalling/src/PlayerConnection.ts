@@ -173,6 +173,13 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
             return;
         }
 
+        // An early player message can already have selected this streamer through
+        // sendToStreamer. Repeating that subscription must not replace an active
+        // negotiation while its answer is still in flight.
+        if (this.subscribedStreamer === streamer) {
+            return;
+        }
+
         if (this.subscribedStreamer) {
             Logger.warn(
                 `subscribe: Player ${this.playerId} is resubscribing to a streamer but is already subscribed to ${this.subscribedStreamer.streamerId}`

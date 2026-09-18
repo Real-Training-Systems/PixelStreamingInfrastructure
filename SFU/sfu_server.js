@@ -264,58 +264,66 @@ function onStreamerDisconnected() {
 async function onPeerConnected(peerId) {
     console.log("Player %s joined", peerId);
 
-    if (streamer === null) {
-        console.log("No streamer connected, ignoring player.");
+    if (streamer === null || peers.has(peerId)) {
         return;
     }
 
-    const transport = await createWebRtcTransport("Peer " + peerId);
-    const sdpEndpoint = mediasoupSdp.createSdpEndpoint(transport, mediasoupRouter.rtpCapabilities);
-
-    // media consumers
-    let consumers = [];
+    // Reserve the peer before awaiting transport creation. A disconnect or a
+    // replacement can invalidate this object while mediasoup work is pending.
+    const sourceStreamer = streamer;
+    const peer = { id: peerId, transport: null, sdpEndpoint: null, consumers: [], state: 'creating' };
+    peers.set(peerId, peer);
     try {
-        for (const mediaProducer of streamer.producers) {
-            const consumer = await transport.consume({ producerId: mediaProducer.id, rtpCapabilities: mediasoupRouter.rtpCapabilities });
-            consumer.observer.on("layerschange", function() { console.log("layer changed!", consumer.currentLayers); });
-            sdpEndpoint.addConsumer(consumer);
-            consumers.push(consumer);
+        const transport = await createWebRtcTransport("Peer " + peerId);
+        if (peers.get(peerId) !== peer || streamer !== sourceStreamer) {
+            transport.close();
+            return;
         }
-    } catch (err) {
-        console.error("transport.consume() failed:", err);
+        peer.transport = transport;
+        peer.sdpEndpoint = mediasoupSdp.createSdpEndpoint(transport, mediasoupRouter.rtpCapabilities);
+        for (const mediaProducer of sourceStreamer.producers) {
+            const consumer = await transport.consume({ producerId: mediaProducer.id, rtpCapabilities: mediasoupRouter.rtpCapabilities });
+            if (peers.get(peerId) !== peer || streamer !== sourceStreamer) {
+                consumer.close();
+                transport.close();
+                return;
+            }
+            consumer.observer.on("layerschange", function() { console.log("layer changed!", consumer.currentLayers); });
+            peer.sdpEndpoint.addConsumer(consumer);
+            peer.consumers.push(consumer);
+        }
+        if (sourceStreamer.dataEnabled) {
+            peer.sdpEndpoint.receiveData();
+        }
+        const offerSignal = {
+            type: "offer",
+            playerId: peerId,
+            sdp: peer.sdpEndpoint.createOffer(),
+            sfu: true,
+            scalabilityMode: scalabilityMode
+        };
+        peer.state = 'awaiting-answer';
+        signalServer.send(JSON.stringify(offerSignal));
+    } catch (error) {
+        failPeer(peer, error);
+    }
+}
+
+function failPeer(peer, error) {
+    console.error(`Negotiation failed for player ${peer.id}:`, error);
+    // An obsolete asynchronous operation must never disconnect its replacement.
+    if (peers.get(peer.id) !== peer) {
         return;
     }
-
-    // data
-    if (streamer.dataEnabled) {
-        sdpEndpoint.receiveData();
+    onPeerDisconnected(peer.id);
+    if (signalServer.readyState === WebSocket.OPEN) {
+        signalServer.send(JSON.stringify({ type: 'disconnectPlayer', playerId: peer.id, reason: 'SFU negotiation failed' }));
     }
-
-    const offerSignal = {
-        type: "offer",
-        playerId: peerId,
-        sdp: sdpEndpoint.createOffer(),
-        sfu: true, // indicate we're offering from sfu
-        scalabilityMode: scalabilityMode
-    };
-
-    // send offer to peer
-    signalServer.send(JSON.stringify(offerSignal));
-
-    const newPeer = {
-        id: peerId,
-        transport: transport,
-        sdpEndpoint: sdpEndpoint,
-        consumers: consumers
-    };
-
-    // add the new peer
-    peers.set(peerId, newPeer);
 }
 
 async function setupPeerDataChannels(peerId) {
     const peer = peers.get(peerId);
-    if (!peer) {
+    if (!peer || !peer.transport) {
         console.error(`Could not send browser any datachannels for peer=${peerId} because peer was not found.`);
         return;
     }
@@ -403,34 +411,41 @@ async function setupStreamerDataChannelsForPeer(peerId) {
 
 async function onPeerAnswer(peerId, sdp) {
     console.log("Got answer from player %s", peerId);
-
-    const consumer = peers.get(peerId);
-    if (!consumer) {
-        console.error(`Unable to find player ${peerId}`);
+    const peer = peers.get(peerId);
+    if (!peer) {
+        return;
     }
-    else {
-        consumer.sdpEndpoint.processAnswer(sdp);
+    try {
+        if (peer.state !== 'awaiting-answer') {
+            throw new Error(`Unexpected answer in peer state ${peer.state}`);
+        }
+        peer.state = 'applying-answer';
+        await peer.sdpEndpoint.processAnswer(sdp);
+        if (peers.get(peerId) === peer) {
+            peer.state = 'connected';
+        }
+    } catch (error) {
+        failPeer(peer, error);
     }
 }
 
 function onPeerDisconnected(peerId) {
     console.log("Player %s disconnected", peerId);
     const peer = peers.get(peerId);
-    if (peer) {
-        for (const consumer of peer.consumers) {
-            consumer.close();
-        }
-        if (peer.peerDataConsumer) {
-            peer.peerDataConsumer.close();
-            peer.peerDataProducer.close();
-        }
-        if (peer.streamerDataConsumer) {
-            peer.streamerDataConsumer.close();
-            peer.streamerDataProducer.close();
-        }
-        peer.transport.close();
+    if (!peer) {
+        return;
     }
+    // Invalidate pending operations before releasing their resources.
     peers.delete(peerId);
+    peer.state = 'closed';
+    for (const consumer of peer.consumers) {
+        consumer.close();
+    }
+    for (const resource of [peer.peerDataConsumer, peer.peerDataProducer, peer.streamerDataConsumer, peer.streamerDataProducer, peer.transport]) {
+        if (resource) {
+            resource.close();
+        }
+    }
 }
 
 function disconnectAllPeers() {
@@ -464,10 +479,10 @@ async function onSignallingMessage(message) {
         onStreamerOffer(msg);
     }
     else if (msg.type === 'answer') {
-        onPeerAnswer(msg.playerId, msg.sdp);
+        await onPeerAnswer(msg.playerId, msg.sdp);
     }
     else if (msg.type === 'playerConnected') {
-        onPeerConnected(msg.playerId);
+        await onPeerConnected(msg.playerId);
     }
     else if (msg.type === 'playerDisconnected') {
         onPeerDisconnected(msg.playerId);
