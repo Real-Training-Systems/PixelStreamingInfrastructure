@@ -225,6 +225,12 @@ async function onStreamerOffer(msg) {
     // ground truth for whether there's anything real for the SFU to switch between at all.
     for (const p of producers) {
         console.log("[WEB-1772-ENCODINGS] kind=%s scalabilityMode=%s encodings=%s", p.kind, scalabilityMode, JSON.stringify(p.rtpParameters.encodings));
+        // Per-encoding health score, fired periodically (~every 2s) by mediasoup - if only one
+        // encoding ever shows a non-zero score, that's ground truth that mediasoup doesn't see
+        // other viable layers to switch to, independent of anything the SFU code does.
+        p.on('score', (scores) => {
+            console.log("[WEB-1772-PRODUCER-SCORE] kind=%s scores=%s", p.kind, JSON.stringify(scores));
+        });
     }
 
     const multiplex = msg.multiplex;
@@ -298,6 +304,16 @@ async function onPeerConnected(peerId) {
                 return;
             }
             consumer.observer.on("layerschange", function() { console.log("layer changed!", consumer.currentLayers); });
+            // WEB-1772 diagnostic (test/web1772-sfu-bwe-instrumentation branch, not on any real fork
+            // branch): initial ceiling/current-layer state at consumer creation, plus a periodic
+            // heartbeat (mediasoup fires 'score' ~every 2s) so we see currentLayers/preferredLayers
+            // over time even when layerschange never fires - silence there is itself the answer to
+            // whether mediasoup ever even attempts to switch during a throttled session.
+            console.log("[WEB-1772-CONSUMER-INIT] kind=%s preferredLayers=%s currentLayers=%s encodings=%s",
+                consumer.kind, JSON.stringify(consumer.preferredLayers), JSON.stringify(consumer.currentLayers), JSON.stringify(consumer.rtpParameters.encodings));
+            consumer.on('score', (score) => {
+                console.log("[WEB-1772-CONSUMER-SCORE] score=%s currentLayers=%s preferredLayers=%s", JSON.stringify(score), JSON.stringify(consumer.currentLayers), JSON.stringify(consumer.preferredLayers));
+            });
             peer.sdpEndpoint.addConsumer(consumer);
             peer.consumers.push(consumer);
         }
