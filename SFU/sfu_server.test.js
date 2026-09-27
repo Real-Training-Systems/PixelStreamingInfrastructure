@@ -24,6 +24,7 @@ function fixture(createTransport = async () => transport()) {
         require(name) {
             if (name === './config') return { mediasoup: { webRtcTransport: {} } };
             if (name === 'ws') return { OPEN: 1 };
+            if (name === './sfu_layers') return require('./sfu_layers');
             if (name === '@epicgames-ps/mediasoup-sdp-bridge') return {
                 createSdpEndpoint() {
                     const endpoint = { addConsumer() {}, createOffer() { return 'offer'; }, async processAnswer() {} };

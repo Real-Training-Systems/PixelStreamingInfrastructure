@@ -3,6 +3,7 @@ const WebSocket = require('ws');
 const mediasoup = require('mediasoup');
 const mediasoupSdp = require('@epicgames-ps/mediasoup-sdp-bridge');
 const minimist = require('minimist');
+const { mediasoupSpatialLayer, reverseVideoSimulcast } = require('./sfu_layers');
 
 if (!config.retrySubscribeDelaySecs) {
     config.retrySubscribeDelaySecs = 10;
@@ -217,14 +218,32 @@ async function onStreamerOffer(msg) {
 
     const transport = await createWebRtcTransport("Streamer");
     const sdpEndpoint = mediasoupSdp.createSdpEndpoint(transport, mediasoupRouter.rtpCapabilities);
-    const { producers, dataEnabled } = await sdpEndpoint.processOffer(msg.sdp, scalabilityMode);
+    // The streamer's first simulcast rid is 1920x1080. mediasoup treats index 0 as the
+    // smallest layer and will only step down from the preferred index, so the offer is
+    // reversed before the producer exists.
+    const prepared = reverseVideoSimulcast(msg.sdp);
+    const { producers, dataEnabled } = await sdpEndpoint.processOffer(prepared.sdp, scalabilityMode);
+    const videoProducer = producers.find((producer) => producer.kind === 'video');
+    const spatialLayerCount = videoProducer && videoProducer.rtpParameters && videoProducer.rtpParameters.encodings
+        ? videoProducer.rtpParameters.encodings.length
+        : prepared.layerCount;
+    if (prepared.reversed) {
+        console.log("Simulcast layers registered smallest-first (%d layers)", spatialLayerCount);
+    }
     const multiplex = msg.multiplex;
     const sdpAnswer = sdpEndpoint.createAnswer();
     const answer = { type: "answer", sdp: sdpAnswer };
 
     console.log("Sending answer to streamer.");
     signalServer.send(JSON.stringify(answer));
-    streamer = { transport: transport, producers: producers, dataEnabled: dataEnabled, multiplexChannels: multiplex };
+    streamer = {
+        transport: transport,
+        producers: producers,
+        dataEnabled: dataEnabled,
+        multiplexChannels: multiplex,
+        layersReversed: prepared.reversed && spatialLayerCount > 1,
+        spatialLayerCount: spatialLayerCount
+    };
 }
 
 function getNextStreamerSCTPId() {
@@ -456,12 +475,17 @@ function disconnectAllPeers() {
 }
 
 function onLayerPreference(msg) {
-    console.log("onLayerPreference: " + JSON.stringify(msg));
     const peer = peers.get(`${msg.playerId}`);
-    if (peer) {
-        for (const consumer of peer.consumers) {
-            consumer.setPreferredLayers({ spatialLayer: msg.spatialLayer, temporalLayer: msg.temporalLayer });
-        }
+    if (!peer) {
+        return;
+    }
+    let spatialLayer = msg.spatialLayer;
+    if (streamer && streamer.layersReversed) {
+        spatialLayer = mediasoupSpatialLayer(spatialLayer, streamer.spatialLayerCount);
+    }
+    console.log("onLayerPreference: player=%s epic=%s mediasoup=%s", msg.playerId, msg.spatialLayer, spatialLayer);
+    for (const consumer of peer.consumers) {
+        consumer.setPreferredLayers({ spatialLayer: spatialLayer, temporalLayer: msg.temporalLayer });
     }
 }
 
