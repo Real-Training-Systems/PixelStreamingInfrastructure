@@ -218,6 +218,15 @@ async function onStreamerOffer(msg) {
     const transport = await createWebRtcTransport("Streamer");
     const sdpEndpoint = mediasoupSdp.createSdpEndpoint(transport, mediasoupRouter.rtpCapabilities);
     const { producers, dataEnabled } = await sdpEndpoint.processOffer(msg.sdp, scalabilityMode);
+
+    // WEB-1772 diagnostic (test/web1772-sfu-bwe-instrumentation branch, not on any real fork branch):
+    // observation-only. Confirms whether the encodings mediasoup actually created per producer are
+    // genuinely different (e.g. distinct scaleResolutionDownBy per simulcast layer) or identical -
+    // ground truth for whether there's anything real for the SFU to switch between at all.
+    for (const p of producers) {
+        console.log("[WEB-1772-ENCODINGS] kind=%s scalabilityMode=%s encodings=%s", p.kind, scalabilityMode, JSON.stringify(p.rtpParameters.encodings));
+    }
+
     const multiplex = msg.multiplex;
     const sdpAnswer = sdpEndpoint.createAnswer();
     const answer = { type: "answer", sdp: sdpAnswer };
@@ -565,6 +574,17 @@ async function createWebRtcTransport(identifier) {
     transport.on("icestatechange", (iceState) => onICEStateChange(identifier, iceState));
     transport.on("iceselectedtuplechange", (iceTuple) => { console.log("%s ICE selected tuple %s", identifier, JSON.stringify(iceTuple)); });
     transport.on("sctpstatechange", (sctpState) => { console.log("%s SCTP state changed to %s", identifier, sctpState); });
+
+    // WEB-1772 diagnostic (test/web1772-sfu-bwe-instrumentation branch, not on any real fork branch):
+    // observation-only, does not change transport behavior. Confirms whether mediasoup's own bandwidth
+    // estimate is actually updating live during a throttled session, independent of whether anything
+    // ever calls consumer.setPreferredLayers().
+    await transport.enableTraceEvent(['bwe']);
+    transport.on("trace", (trace) => {
+        if (trace.type === 'bwe') {
+            console.log("[WEB-1772-BWE] %s bwe trace: %s", identifier, JSON.stringify(trace.info));
+        }
+    });
 
     return transport;
 }
