@@ -73,8 +73,11 @@ function reverseVideoSimulcast(sdp) {
     });
     if (ridIndexes.length < 2) return unchanged;
 
+    // Unreal's simulcast offer lists a=rid lines and no a=ssrc-group:FID blocks.
+    // Reverse those rids on their own. When FID groups are present they have to
+    // move with the rids, and a mismatched set is left unchanged.
     const blocks = fidBlocks(section);
-    if (blocks.length !== ridIndexes.length || !blocksAreContiguous(blocks)) {
+    if (blocks.length > 0 && (blocks.length !== ridIndexes.length || !blocksAreContiguous(blocks))) {
         return unchanged;
     }
 
@@ -88,10 +91,12 @@ function reverseVideoSimulcast(sdp) {
         section[simulcastIndex] = reverseSimulcastLine(section[simulcastIndex]);
     }
 
-    const spanStart = blocks[0].start;
-    const spanEnd = blocks[blocks.length - 1].end;
-    const reversedBlocks = blocks.slice().reverse().flatMap((block) => block.lines);
-    section.splice(spanStart, spanEnd - spanStart, ...reversedBlocks);
+    if (blocks.length > 0) {
+        const spanStart = blocks[0].start;
+        const spanEnd = blocks[blocks.length - 1].end;
+        const reversedBlocks = blocks.slice().reverse().flatMap((block) => block.lines);
+        section.splice(spanStart, spanEnd - spanStart, ...reversedBlocks);
+    }
 
     const next = lines.slice(0, sectionRange.start).concat(section, lines.slice(sectionRange.end));
     let rewritten = next.join(newline);

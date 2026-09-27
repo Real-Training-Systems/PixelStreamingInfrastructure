@@ -44,6 +44,24 @@ test('a largest-first simulcast offer becomes smallest-first', () => {
     assert.match(result.sdp, /m=audio[\s\S]*a=ssrc:999 cname:audio/);
 });
 
+test('an Unreal offer with rids and no SSRC groups is reversed', () => {
+    const sdp = [
+        'm=video 9 UDP/TLS/RTP/SAVPF 127',
+        'a=rid:simulcast0 send',
+        'a=rid:simulcast1 send',
+        'a=rid:simulcast2 send',
+        'a=simulcast:send simulcast0;simulcast1;simulcast2',
+        'm=audio 9 UDP/TLS/RTP/SAVPF 96',
+        ''
+    ].join('\r\n');
+    const result = reverseVideoSimulcast(sdp);
+    assert.equal(result.reversed, true);
+    assert.equal(result.layerCount, 3);
+    const video = result.sdp.split('m=audio')[0];
+    assert.match(video, /a=simulcast:send simulcast2;simulcast1;simulcast0/);
+    assert.ok(video.indexOf('a=rid:simulcast2 send') < video.indexOf('a=rid:simulcast0 send'));
+});
+
 test('a single-layer offer is left unchanged', () => {
     const sdp = 'm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=rid:h send\r\n';
     const result = reverseVideoSimulcast(sdp);

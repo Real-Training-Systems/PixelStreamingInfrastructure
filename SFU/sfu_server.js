@@ -227,9 +227,7 @@ async function onStreamerOffer(msg) {
     const spatialLayerCount = videoProducer && videoProducer.rtpParameters && videoProducer.rtpParameters.encodings
         ? videoProducer.rtpParameters.encodings.length
         : prepared.layerCount;
-    if (prepared.reversed) {
-        console.log("Simulcast layers registered smallest-first (%d layers)", spatialLayerCount);
-    }
+    console.log("Simulcast offer reversed=%s layers=%d", prepared.reversed, spatialLayerCount);
     const multiplex = msg.multiplex;
     const sdpAnswer = sdpEndpoint.createAnswer();
     const answer = { type: "answer", sdp: sdpAnswer };
