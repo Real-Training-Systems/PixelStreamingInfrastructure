@@ -38,12 +38,12 @@ const config = {
         "rtp",
         "srtp",
         "rtcp",
-        "sctp"
+        "sctp",
         // 'rtx',
-        // 'bwe',
-        // 'score',
-        // 'simulcast',
-        // 'svc'
+        'bwe',
+        'score',
+        'simulcast',
+        'svc'
       ],
     },
     router: {
@@ -80,8 +80,10 @@ const config = {
     // private or public ip here.
     webRtcTransport: {
       listenIps: passedPublicIP !== null ? [{ ip: "0.0.0.0", announcedIp: passedPublicIP}] : getLocalListenIps(),
-      // 100 megabits
-      initialAvailableOutgoingBitrate: 100_000_000,
+      // WEB-1772 test: mediasoup's own documented default (was 100_000_000 / 100 megabits,
+      // inherited from Epic's upstream reference config). Testing whether an inflated starting
+      // assumption is preventing transport-cc from converging to real throttled bandwidth.
+      initialAvailableOutgoingBitrate: 600_000,
     },
   },
 }
